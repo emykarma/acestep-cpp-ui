@@ -88,6 +88,7 @@ function AppContent() {
   const [isCreatePlaylistModalOpen, setIsCreatePlaylistModalOpen] = useState(false);
   const [isAddToPlaylistModalOpen, setIsAddToPlaylistModalOpen] = useState(false);
   const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<Song | null>(null);
+  const [songsToAddToPlaylist, setSongsToAddToPlaylist] = useState<Song[]>([]);
 
   // Video Modal
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
@@ -864,6 +865,8 @@ function AppContent() {
         isFormatCaption: params.isFormatCaption,
       }, token);
 
+      // Store jobId on the temp song so the cancel button can use it
+      setSongs(prev => prev.map(s => s.id === tempId ? { ...s, jobId: job.jobId } : s));
       beginPollingJob(job.jobId, tempId);
 
     } catch (e) {
@@ -1096,6 +1099,34 @@ function AppContent() {
     });
   };
 
+  const handleCancelGeneration = async (song: Song) => {
+    if (!token || !song.jobId) return;
+    try {
+      await generateApi.cancelGeneration(song.jobId, token);
+      // Remove the temp song from the list immediately
+      setSongs(prev => prev.filter(s => s.id !== song.id));
+      // Stop polling
+      const jobData = activeJobsRef.current.get(song.jobId);
+      if (jobData) {
+        clearInterval(jobData.pollInterval);
+        activeJobsRef.current.delete(song.jobId);
+        setActiveJobCount(activeJobsRef.current.size);
+        if (activeJobsRef.current.size === 0) setIsGenerating(false);
+      }
+      showToast('Generation cancelled');
+    } catch (e) {
+      console.error('Cancel error:', e);
+      showToast('Failed to cancel generation', 'error');
+    }
+  };
+
+  const handleAddToPlaylistMany = (songsToAdd: Song[]) => {
+    // Open playlist modal with first song; after selection add all
+    if (!songsToAdd.length) return;
+    setSongsToAddToPlaylist(songsToAdd);
+    setIsAddToPlaylistModalOpen(true);
+  };
+
   const handleDeleteReferenceTrack = (trackId: string) => {
     if (!token) return;
 
@@ -1146,11 +1177,18 @@ function AppContent() {
   };
 
   const addSongToPlaylist = async (playlistId: string) => {
-    if (!songToAddToPlaylist || !token) return;
+    if (!token) return;
     try {
-      await playlistsApi.addSong(playlistId, songToAddToPlaylist.id, token);
-      setSongToAddToPlaylist(null);
-      showToast(t('songAddedToPlaylist'));
+      // Multi-select mode
+      if (songsToAddToPlaylist.length > 0) {
+        await Promise.all(songsToAddToPlaylist.map(s => playlistsApi.addSong(playlistId, s.id, token)));
+        setSongsToAddToPlaylist([]);
+        showToast(`${songsToAddToPlaylist.length} songs added to playlist`);
+      } else if (songToAddToPlaylist) {
+        await playlistsApi.addSong(playlistId, songToAddToPlaylist.id, token);
+        setSongToAddToPlaylist(null);
+        showToast(t('songAddedToPlaylist'));
+      }
       playlistsApi.getMyPlaylists(token).then(r => setPlaylists(r.playlists)).catch(() => {});
     } catch (error) {
       console.error('Add song error:', error);
@@ -1364,11 +1402,14 @@ function AppContent() {
                 onReusePrompt={handleReuse}
                 onDelete={handleDeleteSong}
                 onDeleteMany={handleDeleteSongs}
+                onAddToPlaylistMany={handleAddToPlaylistMany}
                 onUseAsReference={handleUseAsReference}
                 onCoverSong={handleCoverSong}
                 onUseUploadAsReference={handleUseUploadAsReference}
                 onCoverUpload={handleCoverUpload}
+                onDeleteUpload={handleDeleteReferenceTrack}
                 onSongUpdate={handleSongUpdate}
+                onCancelGeneration={handleCancelGeneration}
               />
             </div>
 

@@ -44,9 +44,11 @@ app.use(helmet({
       frameAncestors: ["'self'"],
       imgSrc: ["'self'", 'data:', 'https:'],
       objectSrc: ["'none'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", 'blob:'],
       scriptSrcAttr: ["'none'"],
       styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
+      workerSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'", 'blob:', 'data:'],
       upgradeInsecureRequests: [],
     },
   },
@@ -114,6 +116,19 @@ app.use('/demucs-web', (req, res, next) => {
   ].join('; '));
   next();
 }, express.static(path.join(__dirname, '../public/demucs-web')));
+
+// FFmpeg WASM core — served locally so the video generator works offline.
+// Requires COOP + COEP for SharedArrayBuffer (same as demucs-web).
+app.use('/ffmpeg-core', (req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // Serve .wasm with the correct MIME type
+  if (req.path.endsWith('.wasm')) {
+    res.setHeader('Content-Type', 'application/wasm');
+  }
+  next();
+}, express.static(path.join(__dirname, '../public/ffmpeg-core')));
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -422,6 +437,16 @@ app.use('/api/models', modelsRoutes);
 // Falls back gracefully when dist/ hasn't been built yet.
 const DIST_DIR = path.join(__dirname, '../../dist');
 if (existsSync(DIST_DIR)) {
+  // COOP + COEP for SharedArrayBuffer (needed by ffmpeg.wasm in the video generator).
+  // Using "credentialless" instead of "require-corp" so cross-origin images (cover art,
+  // picsum placeholders, etc.) are still loadable without CORP headers.
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/') && !req.path.startsWith('/audio/')) {
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    }
+    next();
+  });
   app.use(express.static(DIST_DIR));
   // Pre-load index.html once so the SPA fallback doesn't hit the disk per-request
   const indexHtml = readFileSync(path.join(DIST_DIR, 'index.html'), 'utf-8');

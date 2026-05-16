@@ -9,7 +9,8 @@ import {
     ListPlus,
     Download,
     Trash2,
-    Share2
+    Share2,
+    MousePointerClick
 } from 'lucide-react';
 
 interface SongDropdownMenuProps {
@@ -29,6 +30,7 @@ interface SongDropdownMenuProps {
     onDelete?: () => void;
     onUseAsReference?: () => void;
     onCoverSong?: () => void;
+    onActivateSelect?: () => void;
 }
 
 interface MenuItemProps {
@@ -75,7 +77,8 @@ export const SongDropdownMenu: React.FC<SongDropdownMenuProps> = ({
     onShare,
     onDelete,
     onUseAsReference,
-    onCoverSong
+    onCoverSong,
+    onActivateSelect,
 }) => {
     const { t } = useI18n();
     const menuRef = useRef<HTMLDivElement>(null);
@@ -213,6 +216,17 @@ export const SongDropdownMenu: React.FC<SongDropdownMenuProps> = ({
                     onClick={() => handleAction(onCoverSong)}
                     disabled={!song.audioUrl}
                 />
+            )}
+
+            {onActivateSelect && (
+                <>
+                    <MenuDivider />
+                    <MenuItem
+                        icon={<MousePointerClick size={14} />}
+                        label="Select"
+                        onClick={() => handleAction(onActivateSelect)}
+                    />
+                </>
             )}
 
             <MenuDivider />

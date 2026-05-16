@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Song } from '../types';
-import { Play, MoreHorizontal, Heart, ThumbsDown, ListPlus, Pause, Search, Filter, Check, Globe, Lock, Loader2, ThumbsUp, Share2, Video, Info, Clock } from 'lucide-react';
+import { Play, MoreHorizontal, Heart, ThumbsDown, ListPlus, Pause, Search, Filter, Check, Globe, Lock, Loader2, ThumbsUp, Share2, Video, Info, Clock, Square, MousePointerClick } from 'lucide-react';
+import { generateApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
 import { SongDropdownMenu } from './SongDropdownMenu';
@@ -26,10 +27,13 @@ interface SongListProps {
     onDelete?: (song: Song) => void;
     onSongUpdate?: (updatedSong: Song) => void;
     onDeleteMany?: (songs: Song[]) => void;
+    onAddToPlaylistMany?: (songs: Song[]) => void;
     onUseAsReference?: (song: Song) => void;
     onCoverSong?: (song: Song) => void;
     onUseUploadAsReference?: (track: { audio_url: string; filename: string }) => void;
     onCoverUpload?: (track: { audio_url: string; filename: string }) => void;
+    onDeleteUpload?: (trackId: string) => void;
+    onCancelGeneration?: (song: Song) => void;
 }
 
 // ... existing code ...
@@ -104,10 +108,13 @@ export const SongList: React.FC<SongListProps> = ({
     onDelete,
     onSongUpdate,
     onDeleteMany,
+    onAddToPlaylistMany,
     onUseAsReference,
     onCoverSong,
     onUseUploadAsReference,
-    onCoverUpload
+    onCoverUpload,
+    onDeleteUpload,
+    onCancelGeneration,
 }) => {
     const { user } = useAuth();
     const { t } = useI18n();
@@ -319,6 +326,21 @@ export const SongList: React.FC<SongListProps> = ({
                                 >
                                     {allSelected ? 'Clear all' : 'Select all'}
                                 </button>
+                                {onAddToPlaylistMany && (
+                                    <button
+                                        onClick={() => {
+                                            if (!selectedSongs.length) return;
+                                            onAddToPlaylistMany(selectedSongs);
+                                        }}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${selectedSongs.length
+                                                ? 'border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-500/10'
+                                                : 'border-zinc-200 dark:border-white/10 text-zinc-400 cursor-not-allowed'
+                                            }`}
+                                        disabled={!selectedSongs.length}
+                                    >
+                                        Add to playlist
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => {
                                         if (!selectedSongs.length) return;
@@ -388,6 +410,8 @@ export const SongList: React.FC<SongListProps> = ({
                                     onSongUpdate={onSongUpdate}
                                     onUseAsReference={() => onUseAsReference?.(item.song)}
                                     onCoverSong={() => onCoverSong?.(item.song)}
+                                    onCancelGeneration={item.song.isGenerating ? () => onCancelGeneration?.(item.song) : undefined}
+                                    onActivateSelect={() => setIsSelecting(true)}
                                 />
                             ) : (
                                 <UploadItem
@@ -409,6 +433,7 @@ export const SongList: React.FC<SongListProps> = ({
                                     }}
                                     onUseAsReference={() => onUseUploadAsReference?.(item.track)}
                                     onCoverSong={() => onCoverUpload?.(item.track)}
+                                    onDelete={onDeleteUpload ? () => onDeleteUpload(item.track.id) : undefined}
                                 />
                             )
                         ))
@@ -441,6 +466,8 @@ interface SongItemProps {
     onSongUpdate?: (updatedSong: Song) => void;
     onUseAsReference?: () => void;
     onCoverSong?: () => void;
+    onCancelGeneration?: () => void;
+    onActivateSelect?: () => void;
 }
 
 const SongItem: React.FC<SongItemProps> = ({
@@ -464,7 +491,9 @@ const SongItem: React.FC<SongItemProps> = ({
     onDelete,
     onSongUpdate,
     onUseAsReference,
-    onCoverSong
+    onCoverSong,
+    onCancelGeneration,
+    onActivateSelect,
 }) => {
     const { token } = useAuth();
     const [showDropdown, setShowDropdown] = useState(false);
@@ -539,23 +568,27 @@ const SongItem: React.FC<SongItemProps> = ({
             }}
             className={`group flex items-center gap-4 p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-[#18181b] transition-all cursor-pointer border ${isSelected ? 'bg-zinc-100 dark:bg-[#18181b] border-zinc-200 dark:border-white/10' : 'border-transparent bg-transparent'} ${song.audioUrl && !song.isGenerating ? 'cursor-grab active:cursor-grabbing' : ''}`}
         >
-            {isSelectionMode && (
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleSelect();
-                    }}
-                    className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isChecked
-                            ? 'bg-pink-600 border-pink-600 text-white'
-                            : 'border-zinc-300 dark:border-zinc-600 text-transparent hover:border-zinc-400 dark:hover:border-zinc-500'
-                        } ${song.isGenerating ? 'opacity-40 cursor-not-allowed' : ''}`}
-                    disabled={song.isGenerating}
-                    aria-pressed={isChecked}
-                >
-                    <Check size={12} strokeWidth={3} className={isChecked ? 'text-white' : 'text-transparent'} />
-                </button>
-            )}
+            {/* Checkbox — always visible in selection mode, visible on hover otherwise */}
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isSelectionMode) {
+                        // First click outside selection mode: enter selection mode + select this song
+                        onActivateSelect?.();
+                    }
+                    onToggleSelect();
+                }}
+                className={`flex-shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-all ${
+                    isSelectionMode
+                        ? `opacity-100 ${isChecked ? 'bg-pink-600 border-pink-600 text-white' : 'border-zinc-300 dark:border-zinc-600 text-transparent hover:border-zinc-400 dark:hover:border-zinc-500'}`
+                        : `opacity-0 group-hover:opacity-100 ${isChecked ? 'bg-pink-600 border-pink-600 text-white' : 'border-zinc-300 dark:border-zinc-600 text-transparent'}`
+                } ${song.isGenerating ? 'cursor-not-allowed opacity-30' : ''}`}
+                disabled={song.isGenerating}
+                aria-pressed={isChecked}
+            >
+                <Check size={12} strokeWidth={3} className={isChecked ? 'text-white' : 'text-transparent'} />
+            </button>
 
             {/* Cover Art - Reduced size */}
             <div className="relative w-16 h-16 flex-shrink-0 rounded-md bg-zinc-200 dark:bg-zinc-800 overflow-hidden shadow-sm group/image">
@@ -677,8 +710,8 @@ const SongItem: React.FC<SongItemProps> = ({
                         {song.style}
                     </p>
                     {song.isGenerating && (
-                        <div className="pt-2">
-                            <div className="h-1 rounded-full bg-zinc-200/70 dark:bg-white/10 overflow-hidden">
+                        <div className="pt-2 flex items-center gap-2">
+                            <div className="flex-1 h-1 rounded-full bg-zinc-200/70 dark:bg-white/10 overflow-hidden">
                                 <div
                                     className={`h-full bg-gradient-to-r from-pink-500 to-purple-600 transition-all ${song.progress === undefined ? 'opacity-40' : ''}`}
                                     style={{
@@ -689,6 +722,15 @@ const SongItem: React.FC<SongItemProps> = ({
                                     }}
                                 />
                             </div>
+                            {onCancelGeneration && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onCancelGeneration(); }}
+                                    title="Stop generation"
+                                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-red-100 dark:bg-red-500/15 text-red-500 hover:bg-red-200 dark:hover:bg-red-500/25 transition-colors"
+                                >
+                                    <Square size={10} fill="currentColor" />
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -768,6 +810,7 @@ const SongItem: React.FC<SongItemProps> = ({
                                 onShare={() => setShareModalOpen(true)}
                                 onUseAsReference={() => onUseAsReference?.()}
                                 onCoverSong={() => onCoverSong?.()}
+                                onActivateSelect={onActivateSelect}
                             />
                         </div>
                     </div>
@@ -798,7 +841,8 @@ const UploadItem: React.FC<{
     onPlay: (audioUrl: string, title: string) => void;
     onUseAsReference?: () => void;
     onCoverSong?: () => void;
-}> = ({ track, onPlay, onUseAsReference, onCoverSong }) => {
+    onDelete?: () => void;
+}> = ({ track, onPlay, onUseAsReference, onCoverSong, onDelete }) => {
     const title = track.filename.replace(/\.[^/.]+$/, '');
     const duration = track.duration
         ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, '0')}`
@@ -823,7 +867,7 @@ const UploadItem: React.FC<{
             isChecked={false}
             isLiked={false}
             isPlaying={false}
-            isOwner={false}
+            isOwner={!!onDelete}
             onPlay={() => onPlay(track.audio_url, title)}
             onSelect={() => onPlay(track.audio_url, title)}
             onToggleSelect={() => undefined}
@@ -833,7 +877,7 @@ const UploadItem: React.FC<{
             onShowDetails={() => undefined}
             onNavigateToProfile={() => undefined}
             onReusePrompt={undefined}
-            onDelete={() => undefined}
+            onDelete={onDelete}
             onUseAsReference={onUseAsReference}
             onCoverSong={onCoverSong}
         />

@@ -122,7 +122,7 @@ interface JobStatus {
 interface ActiveJob {
   params: GenerationParams;
   startTime: number;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   result?: GenerationResult;
   error?: string;
   rawResponse?: unknown;
@@ -131,6 +131,8 @@ interface ActiveJob {
   stage?: string;
   /** All raw lines emitted by ace-lm / ace-synth (stdout + stderr), in order. */
   logs: string[];
+  /** Reference to the currently running child process (ace-lm or ace-synth). */
+  currentProcess?: import('child_process').ChildProcess;
 }
 
 const activeJobs = new Map<string, ActiveJob>();
@@ -310,6 +312,7 @@ function runBinary(
   label: string,
   env?: NodeJS.ProcessEnv,
   onLine?: (line: string) => void,
+  onProcess?: (proc: import('child_process').ChildProcess) => void,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args, {
@@ -317,6 +320,7 @@ function runBinary(
       env:   { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    onProcess?.(proc);
 
     let stdout = '';
     let stderr = '';
@@ -649,7 +653,7 @@ async function runViaSpawn(
       const lmModel = config.acestep.lmModel;
       if (!lmModel) throw new Error('LM model not found — run models.sh first');
 
-      const lmArgs: string[] = ['--request', requestPath, '--lm', lmModel];
+      const lmArgs: string[] = ['--request', requestPath, '--model', lmModel];
 
       const batchSize = Math.min(Math.max(params.batchSize ?? 1, 1), 8);
       if (batchSize > 1) lmArgs.push('--batch', String(batchSize));
@@ -658,7 +662,7 @@ async function runViaSpawn(
       const lmCmd = `${lmBin} ${lmArgs.join(' ')}`;
       console.log(`[Job ${jobId}] Running ace-lm:\n  ${lmCmd}`);
       job.logs.push(`\n--- Running ace-lm ---\n$ ${lmCmd}`);
-      await runBinary(lmBin, lmArgs, 'ace-lm', undefined, makeLmProgressHandler(job));
+      await runBinary(lmBin, lmArgs, 'ace-lm', undefined, makeLmProgressHandler(job), (proc) => { job.currentProcess = proc; });
 
       // Collect enriched JSON files produced by ace-lm:
       // request.json → request0.json [, request1.json, …] (placed alongside request.json)
@@ -717,7 +721,7 @@ async function runViaSpawn(
 
     const ditArgs: string[] = [
       '--request',      ...enrichedPaths,
-      '--embedding', textEncoderModel,
+      '--text-encoder', textEncoderModel,
       '--dit',          ditModel,
       '--vae',          vaeModel,
     ];
@@ -750,7 +754,7 @@ async function runViaSpawn(
     const ditCmd = `${ditVaeBin} ${ditArgs.join(' ')}`;
     console.log(`[Job ${jobId}] Running ace-synth:\n  ${ditCmd}`);
     job.logs.push(`\n--- Running ace-synth ---\n$ ${ditCmd}`);
-    await runBinary(ditVaeBin, ditArgs, 'ace-synth', undefined, makeDitVaeProgressHandler(job));
+    await runBinary(ditVaeBin, ditArgs, 'ace-synth', undefined, makeDitVaeProgressHandler(job), (proc) => { job.currentProcess = proc; });
 
     // ── Collect generated audio files ──────────────────────────────────────
     // ace-synth places output files alongside each enriched JSON:
@@ -806,10 +810,15 @@ async function runViaSpawn(
     await rm(tmpDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
 
   } catch (err) {
+    // If the job was cancelled, don't overwrite the status — just clean up silently
+    const currentJob = activeJobs.get(jobId);
+    if (currentJob?.status === 'cancelled') {
+      try { await rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      return; // Don't re-throw — the cancellation is intentional
+    }
     // Append error to the debug log before re-throwing
-    if (activeJobs.has(jobId)) {
-      const j = activeJobs.get(jobId)!;
-      j.logs.push(`\n=== Job ${jobId} FAILED: ${(err as Error).message} ===`);
+    if (currentJob) {
+      currentJob.logs.push(`\n=== Job ${jobId} FAILED: ${(err as Error).message} ===`);
     }
     // Best-effort cleanup on failure
     try {
@@ -1209,7 +1218,7 @@ export async function runUnderstand(audioUrl: string): Promise<UnderstandResult>
       '--src-audio', srcAudioPath,
       '--dit',       ditModel,
       '--vae',       vaeModel,
-      '--lm',        lmModel,
+      '--model',     lmModel,
       '-o',          outJsonPath,
     ];
 
@@ -1277,6 +1286,35 @@ export async function downloadAudioToBuffer(url: string): Promise<{ buffer: Buff
 }
 
 export function cleanupJob(jobId: string): void { activeJobs.delete(jobId); }
+
+/**
+ * Cancel a queued or running job.
+ * Kills the current child process (SIGTERM) and marks the job as cancelled.
+ * Returns true if the job was found and cancelled, false otherwise.
+ */
+export function cancelJob(jobId: string): boolean {
+  const job = activeJobs.get(jobId);
+  if (!job) return false;
+  if (job.status !== 'queued' && job.status !== 'running') return false;
+
+  // Kill the active process if any
+  if (job.currentProcess) {
+    try {
+      job.currentProcess.kill('SIGKILL'); // SIGKILL — immediate, no cleanup by the binary
+    } catch { /* ignore */ }
+    job.currentProcess = undefined;
+  }
+
+  // Remove from queue if pending
+  const idx = jobQueue.indexOf(jobId);
+  if (idx !== -1) jobQueue.splice(idx, 1);
+
+  job.status = 'cancelled';
+  job.error = 'Cancelled by user';
+  job.logs.push('\n=== Job cancelled by user ===');
+  console.log(`[Job ${jobId}] Cancelled by user`);
+  return true;
+}
 
 export function cleanupOldJobs(maxAgeMs = 3600000): void {
   const now = Date.now();

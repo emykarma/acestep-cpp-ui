@@ -15,8 +15,10 @@ if [ ! -d "node_modules" ] || [ ! -d "server/node_modules" ]; then
 fi
 
 if [ -f ".env" ]; then
-  # shellcheck disable=SC2046
-  export $(grep -v '^#' .env | grep -v '^\s*$' | xargs)
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
 
 # ── Binary auto-detection hint ────────────────────────────────────────────────

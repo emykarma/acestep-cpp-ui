@@ -14,6 +14,7 @@ import {
   discoverEndpoints,
   checkSpaceHealth,
   cleanupJob,
+  cancelJob,
   getJobRawResponse,
   getJobLogs,
   listActiveJobs,
@@ -562,6 +563,34 @@ router.get('/status/:jobId', statusRateLimiter, authMiddleware, async (req: Auth
   }
 });
 
+// Cancel a running or queued job
+router.delete('/:jobId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { jobId } = req.params;
+
+  // jobId from the frontend is the DB record ID.
+  // activeJobs uses the internal acestep task ID (acestep_task_id).
+  // Look it up first, then cancel by the real task ID.
+  try {
+    const rows = await pool.query(
+      `SELECT acestep_task_id FROM generation_jobs WHERE id = ? AND user_id = ?`,
+      [jobId, req.user!.id]
+    );
+    const aceTaskId = (rows as any[])[0]?.acestep_task_id as string | undefined;
+
+    // Mark as cancelled in the DB regardless
+    await pool.query(
+      `UPDATE generation_jobs SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`,
+      [jobId]
+    );
+
+    const cancelled = aceTaskId ? cancelJob(aceTaskId) : false;
+    res.json({ success: true, cancelled, message: cancelled ? 'Job cancelled' : 'Job marked as cancelled (process may have already finished)' });
+  } catch (err) {
+    console.error('Cancel error:', err);
+    res.status(500).json({ error: 'Failed to cancel job' });
+  }
+});
+
 // Audio proxy endpoint
 router.get('/audio', async (req, res: Response) => {
   try {
@@ -799,7 +828,7 @@ router.post('/format', authMiddleware, async (req: AuthenticatedRequest, res: Re
       if (timeSignature)         reqJson.timesignature  = timeSignature;
       await wf(reqPath, JSON.stringify(reqJson, null, 2));
 
-      const args: string[] = ['--request', reqPath, '--lm', config.acestep.lmModel];
+      const args: string[] = ['--request', reqPath, '--model', config.acestep.lmModel];
       const { spawn } = await import('child_process');
       const result = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
         const proc = spawn(config.acestep.lmBin!, args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });

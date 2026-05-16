@@ -228,24 +228,47 @@ export const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ isOpen
         }
       });
 
-      const cdnBases = [
-        'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
-        'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
-      ];
+      // Try local server first (bundled, works offline, no CSP issues),
+      // then fall back to CDN if somehow missing.
+      const localBase = `${window.location.protocol}//${window.location.hostname}:${window.location.port || (window.location.protocol === 'https:' ? '443' : '80')}/ffmpeg-core`;
+
+      // Load ffmpeg-core from local server (always served by Express with proper CORP headers)
+      // classWorkerURL overrides the Worker file path so ffmpeg uses our local copy
+      const loadOptions = {
+        coreURL: await toBlobURL(`${localBase}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${localBase}/ffmpeg-core.wasm`, 'application/wasm'),
+      };
+
       let loaded = false;
-      for (const baseURL of cdnBases) {
-        try {
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          });
-          loaded = true;
-          break;
-        } catch {
-          console.warn(`FFmpeg load failed from ${baseURL}, trying next CDN...`);
+      try {
+        await ffmpeg.load(loadOptions);
+        loaded = true;
+        console.log('FFmpeg loaded from local server');
+      } catch (e) {
+        console.warn('Local FFmpeg load failed, trying CDN...', e);
+      }
+
+      // CDN fallback (still uses local worker to avoid CSP issues)
+      if (!loaded) {
+        const cdnSources = [
+          'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
+          'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
+        ];
+        for (const baseURL of cdnSources) {
+          try {
+            await ffmpeg.load({
+              coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            });
+            loaded = true;
+            console.log(`FFmpeg loaded from CDN: ${baseURL}`);
+            break;
+          } catch {
+            console.warn(`FFmpeg load failed from ${baseURL}`);
+          }
         }
       }
-      if (!loaded) throw new Error('All CDN sources failed');
+      if (!loaded) throw new Error('Failed to load FFmpeg from all sources');
 
       ffmpegRef.current = ffmpeg;
       setFfmpegLoaded(true);

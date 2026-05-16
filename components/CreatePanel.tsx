@@ -3,6 +3,7 @@ import { Sparkles, ChevronDown, Settings2, Trash2, Music2, Sliders, Dices, Hash,
 import { GenerationParams, Song } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
+import { PresetManager, PresetData } from './PresetManager';
 import { generateApi } from '../services/api';
 import { MAIN_STYLES } from '../data/genres';
 import { EditableSlider } from './EditableSlider';
@@ -1485,6 +1486,46 @@ export const CreatePanel: React.FC<CreatePanelProps> = ({
           </div>
         </div>
 
+
+        {/* PRESET BAR */}
+        <PresetManager
+          currentValues={{
+            style, musicTags,
+            lyrics,
+            instrumental, vocalLanguage, vocalGender,
+            duration, bpm, keyScale, timeSignature,
+            inferenceSteps, guidanceScale, shift, inferMethod, batchSize,
+            lmTemperature, lmCfgScale, lmTopP, lmTopK, lmNegativePrompt,
+            loraPath, loraEnabled, loraScale,
+            taskType,
+          }}
+          onLoad={(data: PresetData) => {
+            if (data.style !== undefined) setStyle(data.style);
+            if (data.musicTags !== undefined) setMusicTags(data.musicTags);
+            if (data.lyrics !== undefined) setLyrics(data.lyrics);
+            if (data.instrumental !== undefined) setInstrumental(data.instrumental);
+            if (data.vocalLanguage !== undefined) setVocalLanguage(data.vocalLanguage);
+            if (data.vocalGender !== undefined) setVocalGender(data.vocalGender as 'male' | 'female' | '');
+            if (data.duration !== undefined) setDuration(data.duration);
+            if (data.bpm !== undefined) setBpm(data.bpm);
+            if (data.keyScale !== undefined) setKeyScale(data.keyScale);
+            if (data.timeSignature !== undefined) setTimeSignature(data.timeSignature);
+            if (data.inferenceSteps !== undefined) setInferenceSteps(data.inferenceSteps);
+            if (data.guidanceScale !== undefined) setGuidanceScale(data.guidanceScale);
+            if (data.shift !== undefined) setShift(data.shift);
+            if (data.inferMethod !== undefined) setInferMethod(data.inferMethod as 'ode' | 'sde');
+            if (data.batchSize !== undefined) setBatchSize(data.batchSize);
+            if (data.lmTemperature !== undefined) setLmTemperature(data.lmTemperature);
+            if (data.lmCfgScale !== undefined) setLmCfgScale(data.lmCfgScale);
+            if (data.lmTopP !== undefined) setLmTopP(data.lmTopP);
+            if (data.lmTopK !== undefined) setLmTopK(data.lmTopK);
+            if (data.lmNegativePrompt !== undefined) setLmNegativePrompt(data.lmNegativePrompt);
+            if (data.loraPath !== undefined) setLoraPath(data.loraPath);
+            if (data.loraEnabled !== undefined) setLoraEnabled(data.loraEnabled);
+            if (data.loraScale !== undefined) setLoraScale(data.loraScale);
+            if (data.taskType !== undefined) setTaskType(data.taskType);
+          }}
+        />
 
         {/* UNIFIED PANEL */}
         <div className="space-y-5">

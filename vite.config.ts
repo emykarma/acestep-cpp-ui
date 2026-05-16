@@ -8,7 +8,15 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
+      },
       proxy: {
+        '/ffmpeg-core': {
+          target: 'http://127.0.0.1:3001',
+          changeOrigin: true,
+        },
         '/api': {
           target: 'http://127.0.0.1:3001',
           changeOrigin: true,

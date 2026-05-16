@@ -7,6 +7,7 @@ export interface Song {
   duration: string;
   createdAt: Date;
   isGenerating?: boolean;
+  jobId?: string; // Active generation job ID (used to cancel)
   queuePosition?: number; // Position in queue (undefined = actively generating, number = waiting in queue)
   progress?: number;
   stage?: string;
